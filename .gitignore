@@ -1,0 +1,14 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.pdf
+*.docx
+*.doc
+*.csv
+*.zip
+*.webp
+*.jpg
+*.png
+.idea/
+.vscode/
