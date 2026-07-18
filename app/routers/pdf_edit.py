@@ -180,3 +180,28 @@ async def unlock_pdf_endpoint(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=unlocked_{file.filename}"},
     )
+
+
+@router.post("/analyze")
+async def analyze_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        import fitz
+        doc = fitz.open(stream=contents, filetype="pdf")
+        page_count = len(doc)
+        suggested_pages = []
+        for idx in range(page_count):
+            page = doc.load_page(idx)
+            text = page.get_text().lower()
+            if "signature" in text or "sign" in text:
+                suggested_pages.append(idx + 1)
+        return {
+            "page_count": page_count,
+            "suggested_pages": suggested_pages
+        }
+    except Exception as e:
+        logger.error(f"Analyze PDF error: {e}")
+        raise HTTPException(500, f"Analysis failed: {e}")
