@@ -13,11 +13,15 @@ from app.routers import (
     pdf_edit,
 )
 
+from app.middleware.gateway_auth import GatewayAuthMiddleware
+
 app = FastAPI(
     title="File Optimizer & Document Toolkit Microservice",
     version="2.0.0",
     description="High-performance document and image manipulation microservice.",
 )
+
+app.add_middleware(GatewayAuthMiddleware)
 
 # Enable CORS for frontend integration
 app.add_middleware(
