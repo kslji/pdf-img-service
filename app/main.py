@@ -10,6 +10,7 @@ from app.routers import (
     document_assembler,
     image_converter,
     image_compressor,
+    pdf_edit,
 )
 
 app = FastAPI(
@@ -37,6 +38,7 @@ app.include_router(pdf_converter.router)  # /api/v1/convert/pdf-to-*, docx-to-pd
 app.include_router(document_assembler.router)  # /api/v1/assemble/pdf
 app.include_router(image_converter.router)  # /api/v1/convert/image
 app.include_router(image_compressor.router)  # /api/v1/image/compress (alternative)
+app.include_router(pdf_edit.router)  # /api/v1/pdf/*
 
 
 @app.get("/health")

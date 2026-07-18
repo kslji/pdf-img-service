@@ -1,6 +1,6 @@
 # app/routers/pdf_converter.py
 import asyncio
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response, PlainTextResponse
 from app.services.office_converter import (
     pdf_to_text,
@@ -9,6 +9,10 @@ from app.services.office_converter import (
     docx_to_pdf,
     txt_to_pdf,
     csv_to_pdf,
+)
+from app.services.pdf_advanced_processor import (
+    convert_pdf_to_images,
+    convert_images_to_pdf,
 )
 from app.routers.helpers import validate_pdf, read_with_limit
 import logging
@@ -112,3 +116,58 @@ async def csv_to_pdf_endpoint(file: UploadFile = File(...)):
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=converted.pdf"},
     )
+
+
+@router.post("/pdf-to-images")
+async def pdf_to_images_endpoint(
+    file: UploadFile = File(...),
+    format: str = Form("png"),
+    dpi: int = Form(150),
+):
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    format = format.lower().strip()
+    if format not in ("png", "jpeg", "jpg"):
+        raise HTTPException(400, "Supported formats are png, jpeg, or jpg")
+    if format == "jpg":
+        format = "jpeg"
+    try:
+        zip_bytes = await asyncio.to_thread(
+            convert_pdf_to_images, contents, format, dpi
+        )
+    except Exception as e:
+        logger.error(f"PDF to images error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=pages.zip"},
+    )
+
+
+@router.post("/images-to-pdf")
+async def images_to_pdf_endpoint(
+    files: list[UploadFile] = File(...),
+):
+    if not files:
+        raise HTTPException(400, "No image files provided")
+    
+    images_data = []
+    for file in files:
+        if not file.content_type.startswith("image/"):
+            raise HTTPException(400, f"File {file.filename} is not a valid image")
+        # limit each image size to 15MB
+        contents = await read_with_limit(file, 15 * 1024 * 1024)
+        images_data.append(contents)
+        
+    try:
+        pdf_bytes = await asyncio.to_thread(convert_images_to_pdf, images_data)
+    except Exception as e:
+        logger.error(f"Images to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=images_stitched.pdf"},
+    )
+
