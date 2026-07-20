@@ -14,6 +14,7 @@ from app.routers import (
 )
 
 from app.middleware.gateway_auth import GatewayAuthMiddleware
+from app.utils.log_helper import CentralLoggerMiddleware
 
 app = FastAPI(
     title="File Optimizer & Document Toolkit Microservice",
@@ -22,6 +23,7 @@ app = FastAPI(
 )
 
 app.add_middleware(GatewayAuthMiddleware)
+app.add_middleware(CentralLoggerMiddleware, service_name="pdf-image")
 
 # Enable CORS for frontend integration
 app.add_middleware(
