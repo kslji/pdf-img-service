@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import (
     compress,
@@ -50,3 +50,23 @@ app.include_router(pdf_edit.router)  # /api/v1/pdf/*
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/v1/credits")
+async def get_user_credits(request: Request):
+    from app.utils.credit_meter import _get_mongo_col, FREE_TRIAL_LIMIT
+    user_id = getattr(request.state, "user_id", None) or request.headers.get("x-user-id")
+    client_ip = request.client.host if request.client else "anonymous"
+    user_key = user_id or f"ip_{client_ip}"
+
+    col = _get_mongo_col()
+    record = col.find_one({"user_key": user_key}) or {}
+    trials_used = record.get("trials_used", 0)
+
+    return {
+        "user_key": user_key,
+        "free_trials_total": FREE_TRIAL_LIMIT,
+        "free_trials_remaining": max(0, FREE_TRIAL_LIMIT - trials_used),
+        "credits": record.get("credits", 0),
+        "is_trial_active": trials_used < FREE_TRIAL_LIMIT,
+    }

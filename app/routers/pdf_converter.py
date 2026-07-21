@@ -15,6 +15,9 @@ from app.services.pdf_advanced_processor import (
     convert_images_to_pdf,
 )
 from app.routers.helpers import validate_pdf, read_with_limit
+from app.utils.credit_meter import check_and_deduct_credits
+from fastapi import Request
+import fitz  # PyMuPDF
 import logging
 
 router = APIRouter(prefix="/api/v1/convert", tags=["Document Converter"])
@@ -23,10 +26,24 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 30 * 1024 * 1024
 
 
+def _count_pdf_pages(contents: bytes) -> int:
+    try:
+        doc = fitz.open(stream=contents, filetype="pdf")
+        count = len(doc)
+        doc.close()
+        return count
+    except Exception:
+        return 1
+
+
 @router.post("/pdf-to-txt")
-async def pdf_to_txt_endpoint(file: UploadFile = File(...)):
+async def pdf_to_txt_endpoint(request: Request, file: UploadFile = File(...)):
     validate_pdf(file)
     contents = await read_with_limit(file, MAX_FILE_SIZE)
+
+    page_count = _count_pdf_pages(contents)
+    check_and_deduct_credits(request, pages_to_process=page_count)
+
     try:
         text = await pdf_to_text(contents)
     except Exception as e:
