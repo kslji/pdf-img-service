@@ -23,6 +23,8 @@ def check_and_deduct_credits(request: Request, pages_to_process: int = 1):
     - After 2 free trials, each page requires 1 credit.
     """
     user_id = getattr(request.state, "user_id", None) or request.headers.get("x-user-id")
+    if user_id == "anonymous":
+        user_id = None
     client_ip = request.client.host if request.client else "anonymous"
     user_key = user_id or f"ip_{client_ip}"
 

@@ -12,3 +12,6 @@ __pycache__/
 *.png
 .idea/
 .vscode/
+.env
+.env.local
+.env.*.local

@@ -1,16 +1,21 @@
 # app/routers/pdf_edit.py
 import asyncio
+import hashlib
+import json
 import logging
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
 from app.routers.helpers import validate_pdf, read_with_limit
 from app.services.pdf_advanced_processor import (
     crop_pdf,
+    crop_pdf_per_page,
+    get_page_image,
     redact_pdf,
     add_page_numbers,
     sign_pdf,
     unlock_pdf,
 )
+from app.utils.cache import get_cached_page_image, cache_page_image
 
 router = APIRouter(prefix="/api/v1/pdf", tags=["PDF Editor"])
 logger = logging.getLogger(__name__)
@@ -179,6 +184,71 @@ async def unlock_pdf_endpoint(
         pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=unlocked_{file.filename}"},
+    )
+
+
+@router.post("/page-image")
+async def get_page_image_endpoint(
+    file: UploadFile = File(...),
+    page: int = Form(1),
+    dpi: int = Form(96),
+):
+    """Render a single PDF page to PNG for preview/thumbnail use. Cached in-memory."""
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        # Check cache first
+        cached = await asyncio.to_thread(get_cached_page_image, contents, page, dpi)
+        if cached is not None:
+            logger.debug(f"Cache hit for page {page} @ {dpi}dpi")
+            return Response(cached, media_type="image/png")
+
+        # Render if not cached
+        img_bytes = await asyncio.to_thread(get_page_image, contents, page, dpi)
+
+        # Store in cache
+        await asyncio.to_thread(cache_page_image, contents, page, dpi, img_bytes)
+
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"Page image error: {e}")
+        raise HTTPException(500, f"Failed to render page: {e}")
+    return Response(
+        img_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "ETag": f'"{hashlib.md5(img_bytes).hexdigest()}"'
+        }
+    )
+
+
+@router.post("/crop-per-page")
+async def crop_pdf_per_page_endpoint(
+    file: UploadFile = File(...),
+    crops_json: str = Form(...),
+):
+    """Apply independent crop regions to individual pages.
+    
+    crops_json: JSON array of objects:
+      [{ "page": 1, "x": 10, "y": 10, "width": 80, "height": 80, "unit": "percentage" }]
+    Pages not mentioned keep their original dimensions.
+    """
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        crops = json.loads(crops_json)
+        pdf_bytes = await asyncio.to_thread(crop_pdf_per_page, contents, crops)
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"Invalid crops_json: {e}")
+    except Exception as e:
+        logger.error(f"Per-page crop error: {e}")
+        raise HTTPException(500, f"Crop failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=cropped_{file.filename}"},
     )
 
 

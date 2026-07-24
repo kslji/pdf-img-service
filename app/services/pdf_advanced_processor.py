@@ -13,7 +13,7 @@ def convert_pdf_to_images(contents: bytes, fmt: str = "png", dpi: int = 150) -> 
             page = doc.load_page(page_num)
             zoom = dpi / 72.0
             mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat, alpha=(fmt.lower() == "png"))
+            pix = page.get_pixmap(matrix=mat, alpha=False)
             img_data = pix.tobytes(fmt.lower())
             zip_file.writestr(f"page_{page_num + 1}.{fmt.lower()}", img_data)
     return zip_buffer.getvalue()
@@ -22,12 +22,49 @@ def convert_images_to_pdf(images_data: list[bytes]) -> bytes:
     doc = fitz.open()
     for img_bytes in images_data:
         img = Image.open(io.BytesIO(img_bytes))
-        img_format = img.format.lower() if img.format else "png"
-        img_doc = fitz.open(stream=img_bytes, filetype=img_format)
-        pdf_bytes = img_doc.convert_to_pdf()
-        pdf_page_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        doc.insert_pdf(pdf_page_doc)
+        width, height = img.width, img.height
+        page = doc.new_page(width=width, height=height)
+        page.insert_image(fitz.Rect(0, 0, width, height), stream=img_bytes)
     return doc.write()
+
+
+def get_page_image(contents: bytes, page_num: int = 1, dpi: int = 96) -> bytes:
+    """Render a single PDF page to PNG bytes."""
+    doc = fitz.open(stream=contents, filetype="pdf")
+    if page_num < 1 or page_num > len(doc):
+        raise ValueError(f"Page {page_num} out of range (1–{len(doc)})")
+    page = doc.load_page(page_num - 1)
+    mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
+    pix = page.get_pixmap(matrix=mat, alpha=False)
+    return pix.tobytes("png")
+
+
+def crop_pdf_per_page(contents: bytes, crops: list[dict]) -> bytes:
+    """Apply independent crop settings to individual pages.
+    
+    Each crop dict: { page (1-indexed), x, y, width, height, unit ("percentage"|"points") }
+    Pages not in the list keep their original crop box.
+    """
+    doc = fitz.open(stream=contents, filetype="pdf")
+    for crop in crops:
+        page_num = int(crop.get("page", 1)) - 1
+        if page_num < 0 or page_num >= len(doc):
+            continue
+        page = doc.load_page(page_num)
+        page_rect = page.rect
+        x = float(crop["x"])
+        y = float(crop["y"])
+        w = float(crop["width"])
+        h = float(crop["height"])
+        if crop.get("unit", "percentage") == "percentage":
+            x = (x / 100.0) * page_rect.width
+            y = (y / 100.0) * page_rect.height
+            w = (w / 100.0) * page_rect.width
+            h = (h / 100.0) * page_rect.height
+        page.set_cropbox(fitz.Rect(x, y, x + w, y + h))
+    return doc.write()
+
+
 
 def crop_pdf(
     contents: bytes,

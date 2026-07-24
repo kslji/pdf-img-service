@@ -173,7 +173,6 @@ async def images_to_pdf_endpoint(
     for file in files:
         if not file.content_type.startswith("image/"):
             raise HTTPException(400, f"File {file.filename} is not a valid image")
-        # limit each image size to 15MB
         contents = await read_with_limit(file, 15 * 1024 * 1024)
         images_data.append(contents)
         
