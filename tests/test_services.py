@@ -2,6 +2,7 @@
 import unittest
 import io
 import fitz
+import json
 from PIL import Image
 from app.services.pdf_advanced_processor import (
     convert_pdf_to_images,
@@ -151,6 +152,28 @@ class TestPDFServices(unittest.TestCase):
         text = unlocked_doc.load_page(0).get_text()
         self.assertIn("Secret Content", text)
         unlocked_doc.close()
+
+    def test_redact_pdf_multiple_text(self):
+        # The dummy PDF has "Hello World" on page 1 and "Page 2 Content" on page 2
+        # Let's redact both terms
+        redacted_bytes = redact_pdf(self.dummy_pdf_bytes, text_to_redact="Hello, Content")
+        doc = fitz.open(stream=redacted_bytes, filetype="pdf")
+        text1 = doc.load_page(0).get_text()
+        text2 = doc.load_page(1).get_text()
+        self.assertNotIn("Hello World", text1)
+        self.assertNotIn("Page 2 Content", text2)
+        doc.close()
+
+    def test_redact_pdf_list_rect(self):
+        # Test the list of lists coordinate format
+        rects_json = json.dumps([
+            [1, 90, 80, 120, 30]
+        ])
+        redacted_bytes = redact_pdf(self.dummy_pdf_bytes, rects_json=rects_json)
+        doc = fitz.open(stream=redacted_bytes, filetype="pdf")
+        text = doc.load_page(0).get_text()
+        self.assertNotIn("Hello World", text)
+        doc.close()
 
 if __name__ == "__main__":
     unittest.main()

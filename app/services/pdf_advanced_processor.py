@@ -106,25 +106,38 @@ def redact_pdf(
     
     # Text-based redaction
     if text_to_redact:
+        # Split comma-separated search queries
+        terms = [t.strip() for t in text_to_redact.split(",") if t.strip()]
         for page in doc:
-            rects = page.search_for(text_to_redact)
-            for rect in rects:
-                page.add_redact_annot(rect, fill=fill_color)
+            for term in terms:
+                rects = page.search_for(term)
+                for rect in rects:
+                    page.add_redact_annot(rect, fill=fill_color)
             page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
             
     # Coordinate-based redaction
     if rects_json:
         rects_data = json.loads(rects_json)
         for item in rects_data:
-            page_num = item.get("page", 1) - 1
-            if 0 <= page_num < len(doc):
-                page = doc.load_page(page_num)
+            if isinstance(item, dict):
+                page_num = item.get("page", 1) - 1
                 x = item.get("x")
                 y = item.get("y")
                 width = item.get("width")
                 height = item.get("height")
                 unit = item.get("unit", "points")
-                
+            elif isinstance(item, (list, tuple)) and len(item) >= 5:
+                page_num = int(item[0]) - 1
+                x = float(item[1])
+                y = float(item[2])
+                width = float(item[3])
+                height = float(item[4])
+                unit = "points"
+            else:
+                continue
+
+            if 0 <= page_num < len(doc):
+                page = doc.load_page(page_num)
                 page_rect = page.rect
                 if unit == "percentage":
                     x = (x / 100.0) * page_rect.width

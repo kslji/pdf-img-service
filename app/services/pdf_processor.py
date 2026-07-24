@@ -16,11 +16,15 @@ def merge_pdfs(file_streams: list[io.BytesIO]) -> bytes:
 
 
 def split_pdf_to_pages(contents: bytes) -> dict[str, bytes]:
-    reader = PdfReader(io.BytesIO(contents))
+    # First, get total pages using a temporary reader
+    temp_reader = PdfReader(io.BytesIO(contents))
+    total_pages = len(temp_reader.pages)
+    
     pages_dict = {}
-    for i, page in enumerate(reader.pages):
+    for i in range(total_pages):
+        reader = PdfReader(io.BytesIO(contents))
         writer = PdfWriter()
-        writer.add_page(page)
+        writer.add_page(reader.pages[i])
         buf = io.BytesIO()
         writer.write(buf)
         pages_dict[f"page_{i + 1}.pdf"] = buf.getvalue()
@@ -30,13 +34,16 @@ def split_pdf_to_pages(contents: bytes) -> dict[str, bytes]:
 def split_pdf_by_ranges(
     contents: bytes, ranges: list[tuple[int, int]]
 ) -> dict[str, bytes]:
-    reader = PdfReader(io.BytesIO(contents))
+    # First, get total pages using a temporary reader
+    temp_reader = PdfReader(io.BytesIO(contents))
+    total_pages = len(temp_reader.pages)
+    
     result = {}
-    total_pages = len(reader.pages)
     for idx, (start, end) in enumerate(ranges, 1):
         # start and end are 1-based inclusive
         if start < 1 or end > total_pages or start > end:
             continue
+        reader = PdfReader(io.BytesIO(contents))
         writer = PdfWriter()
         for page_num in range(start - 1, end):
             writer.add_page(reader.pages[page_num])
@@ -47,16 +54,36 @@ def split_pdf_by_ranges(
 
 
 def compress_pdf(contents: bytes, level: str = "default") -> bytes:
-    reader = PdfReader(io.BytesIO(contents))
-    writer = PdfWriter()
-    for page in reader.pages:
-        writer.add_page(page)
-    # Compress content streams
-    for page in writer.pages:
-        page.compress_content_streams()
-    output = io.BytesIO()
-    writer.write(output)
-    return output.getvalue()
+    import fitz
+    
+    doc = fitz.open(stream=contents, filetype="pdf")
+    
+    level = level.lower().strip()
+    quality = 70
+    if level == "extreme":
+        quality = 25
+    elif level == "recommended" or level == "default":
+        quality = 50
+    elif level == "low":
+        quality = 85
+
+    for page in doc:
+        try:
+            if hasattr(page, "rewrite_images"):
+                page.rewrite_images(quality=quality, lossy=True)
+        except Exception:
+            pass
+
+    output_stream = io.BytesIO()
+    doc.save(
+        output_stream,
+        garbage=4,
+        deflate=True,
+        deflate_images=True,
+        deflate_fonts=True
+    )
+    doc.close()
+    return output_stream.getvalue()
 
 
 def remove_pages(contents: bytes, pages_to_remove: list[int]) -> bytes:

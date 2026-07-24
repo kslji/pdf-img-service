@@ -19,6 +19,7 @@ async def compress_image_endpoint(
     max_height: Optional[int] = Form(None),
     format: str = Form("original"),
 ):
+    format = format.lower().strip().lstrip(".")
     if file.content_type not in (
         "image/jpeg",
         "image/png",

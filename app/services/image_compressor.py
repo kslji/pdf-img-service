@@ -22,8 +22,8 @@ def compress_image(
 
     # Determine output format
     fmt = output_format if output_format != "original" else original_format
-    # Pillow expects "JPEG" not "jpeg"
-    save_format = "JPEG" if fmt == "jpeg" else fmt.upper()
+    # Pillow expects "JPEG" not "jpeg" / "jpg"
+    save_format = "JPEG" if fmt in ("jpeg", "jpg") else fmt.upper()
 
     # Convert to RGB if saving as JPEG and image has alpha
     if save_format == "JPEG" and image.mode in ("RGBA", "P"):

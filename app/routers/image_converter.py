@@ -16,7 +16,7 @@ async def convert_image_endpoint(
     format: str = Form(...),
     quality: int = Form(85),
 ):
-    format = format.lower().strip()
+    format = format.lower().strip().lstrip(".")
     if format not in ("jpeg", "png", "webp", "gif", "bmp", "tiff"):
         raise HTTPException(400, "Unsupported output format")
     contents = await read_with_limit(file, 15 * 1024 * 1024)

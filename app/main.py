@@ -16,11 +16,20 @@ from app.routers import (
 from app.middleware.gateway_auth import GatewayAuthMiddleware
 from app.utils.log_helper import CentralLoggerMiddleware
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
 app = FastAPI(
     title="File Optimizer & Document Toolkit Microservice",
     version="2.0.0",
     description="High-performance document and image manipulation microservice.",
 )
+
+@app.on_event("startup")
+async def startup_event():
+    # Set default executor to handle high concurrent sync tasks (like PDF processing)
+    loop = asyncio.get_event_loop()
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=250))
 
 app.add_middleware(GatewayAuthMiddleware)
 app.add_middleware(CentralLoggerMiddleware, service_name="pdf-image")
