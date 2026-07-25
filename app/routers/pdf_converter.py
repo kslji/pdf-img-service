@@ -6,6 +6,7 @@ from app.services.office_converter import (
     pdf_to_text,
     pdf_to_docx,
     pdf_to_csv,
+    pdf_to_excel,
     docx_to_pdf,
     txt_to_pdf,
     csv_to_pdf,
@@ -82,6 +83,23 @@ async def pdf_to_csv_endpoint(file: UploadFile = File(...)):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=converted.csv"},
     )
+
+
+@router.post("/pdf-to-excel")
+async def pdf_to_excel_endpoint(file: UploadFile = File(...)):
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        excel_bytes = await pdf_to_excel(contents)
+    except Exception as e:
+        logger.error(f"PDF to Excel error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=converted.xlsx"},
+    )
+
 
 
 @router.post("/docx-to-pdf")

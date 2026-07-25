@@ -136,3 +136,21 @@ async def csv_to_pdf(contents: bytes) -> bytes:
     doc.build(elements)
     buffer.seek(0)
     return buffer.read()
+
+
+async def pdf_to_excel(contents: bytes) -> bytes:
+    all_tables = []
+    with pdfplumber.open(BytesIO(contents)) as pdf:
+        for page in pdf.pages:
+            tables = page.extract_tables()
+            for table in tables:
+                if table:
+                    all_tables.append(pd.DataFrame(table[1:], columns=table[0]))
+    if not all_tables:
+        raise ValueError("No tables found in PDF")
+    combined = pd.concat(all_tables, ignore_index=True)
+    out_buf = BytesIO()
+    with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
+        combined.to_excel(writer, index=False)
+    return out_buf.getvalue()
+
