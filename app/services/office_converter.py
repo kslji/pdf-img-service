@@ -2,6 +2,7 @@ import asyncio
 import subprocess
 import tempfile
 import logging
+from typing import Optional
 from pathlib import Path
 import pdfplumber
 import pandas as pd
@@ -16,13 +17,41 @@ from reportlab.lib import colors
 logger = logging.getLogger(__name__)
 
 
-async def pdf_to_text(contents: bytes) -> str:
+def translate_text_helper(text: str, target_lang: str) -> str:
+    if not text.strip():
+        return text
+    from deep_translator import GoogleTranslator
+    try:
+        translator = GoogleTranslator(source="auto", target=target_lang)
+        if len(text) < 4500:
+            return translator.translate(text)
+        else:
+            chunks = []
+            current_chunk = ""
+            for paragraph in text.split("\n"):
+                if len(current_chunk) + len(paragraph) + 1 < 4500:
+                    current_chunk += ("\n" if current_chunk else "") + paragraph
+                else:
+                    if current_chunk:
+                        chunks.append(translator.translate(current_chunk))
+                    current_chunk = paragraph
+            if current_chunk:
+                chunks.append(translator.translate(current_chunk))
+            return "\n".join(chunks)
+    except Exception as e:
+        logger.error(f"Translation helper failed: {e}")
+        return text
+
+
+async def pdf_to_text(contents: bytes, target_lang: Optional[str] = None) -> str:
     with pdfplumber.open(BytesIO(contents)) as pdf:
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+    if target_lang and target_lang != "none":
+        text = translate_text_helper(text, target_lang)
     return text
 
 
-async def pdf_to_csv(contents: bytes) -> bytes:
+async def pdf_to_csv(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     all_tables = []
     with pdfplumber.open(BytesIO(contents)) as pdf:
         for page in pdf.pages:
@@ -33,11 +62,24 @@ async def pdf_to_csv(contents: bytes) -> bytes:
     if not all_tables:
         raise ValueError("No tables found in PDF")
     combined = pd.concat(all_tables, ignore_index=True)
+    if target_lang and target_lang != "none":
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source="auto", target=target_lang)
+        for col in combined.columns:
+            new_col = str(col)
+            try:
+                if new_col.strip():
+                    new_col = translator.translate(new_col)
+            except Exception:
+                pass
+            combined.rename(columns={col: new_col}, inplace=True)
+            combined[new_col] = combined[new_col].apply(
+                lambda val: translator.translate(str(val)) if val and isinstance(val, str) and val.strip() else val
+            )
     return combined.to_csv(index=False).encode("utf-8")
 
 
-async def pdf_to_docx(contents: bytes) -> bytes:
-    # pdf2docx works with file paths
+async def pdf_to_docx(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
         tmp_pdf.write(contents)
         pdf_path = tmp_pdf.name
@@ -46,6 +88,31 @@ async def pdf_to_docx(contents: bytes) -> bytes:
         cv = Pdf2DocxConverter(pdf_path)
         cv.convert(docx_path)
         cv.close()
+        
+        if target_lang and target_lang != "none":
+            doc = Document(docx_path)
+            from deep_translator import GoogleTranslator
+            translator = GoogleTranslator(source="auto", target=target_lang)
+
+            def translate_runs(runs):
+                for run in runs:
+                    if run.text and run.text.strip():
+                        try:
+                            translated = translator.translate(run.text)
+                            if translated:
+                                run.text = translated
+                        except Exception as te:
+                            logger.error(f"Pdf-to-docx run translation error: {te}")
+
+            for paragraph in doc.paragraphs:
+                translate_runs(paragraph.runs)
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            translate_runs(paragraph.runs)
+            doc.save(docx_path)
+
         with open(docx_path, "rb") as f:
             docx_bytes = f.read()
         return docx_bytes
@@ -54,7 +121,7 @@ async def pdf_to_docx(contents: bytes) -> bytes:
         Path(docx_path).unlink(missing_ok=True)
 
 
-async def docx_to_pdf(contents: bytes) -> bytes:
+async def docx_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     import shutil
     import os
     libreoffice_bin = shutil.which("libreoffice") or shutil.which("soffice")
@@ -64,7 +131,37 @@ async def docx_to_pdf(contents: bytes) -> bytes:
     if not libreoffice_bin:
         raise FileNotFoundError("LibreOffice executable not found. Please install LibreOffice (e.g. 'brew install --cask libreoffice').")
 
-    # Use LibreOffice headless for reliable conversion
+    if target_lang and target_lang != "none":
+        logger.info(f"docx_to_pdf: translating to '{target_lang}'")
+        doc = Document(BytesIO(contents))
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source="auto", target=target_lang)
+
+        def translate_runs(runs):
+            """Translate each run's text individually, preserving run-level formatting."""
+            for run in runs:
+                if run.text and run.text.strip():
+                    try:
+                        translated = translator.translate(run.text)
+                        if translated:
+                            run.text = translated
+                    except Exception as te:
+                        logger.error(f"Run translation error: {te}")
+
+        for paragraph in doc.paragraphs:
+            translate_runs(paragraph.runs)
+
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        translate_runs(paragraph.runs)
+
+        out_buf = BytesIO()
+        doc.save(out_buf)
+        contents = out_buf.getvalue()
+        logger.info(f"docx_to_pdf: translation complete, new size={len(contents)} bytes")
+
     with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp_docx:
         tmp_docx.write(contents)
         docx_path = tmp_docx.name
@@ -91,14 +188,13 @@ async def docx_to_pdf(contents: bytes) -> bytes:
         return pdf_bytes
     finally:
         Path(docx_path).unlink(missing_ok=True)
-        # Cleanup output dir
-        import shutil
-
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
-async def txt_to_pdf(contents: bytes) -> bytes:
+async def txt_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     text = contents.decode("utf-8")
+    if target_lang and target_lang != "none":
+        text = translate_text_helper(text, target_lang)
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
@@ -111,12 +207,25 @@ async def txt_to_pdf(contents: bytes) -> bytes:
     return buffer.read()
 
 
-async def csv_to_pdf(contents: bytes) -> bytes:
+async def csv_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     df = pd.read_csv(BytesIO(contents))
+    if target_lang and target_lang != "none":
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source="auto", target=target_lang)
+        for col in df.columns:
+            new_col = str(col)
+            try:
+                if new_col.strip():
+                    new_col = translator.translate(new_col)
+            except Exception:
+                pass
+            df.rename(columns={col: new_col}, inplace=True)
+            df[new_col] = df[new_col].apply(
+                lambda val: translator.translate(str(val)) if val and isinstance(val, str) and val.strip() else val
+            )
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     elements = []
-    # Convert DataFrame to table data
     data = [df.columns.tolist()] + df.values.tolist()
     table = Table(data)
     table.setStyle(
@@ -138,7 +247,7 @@ async def csv_to_pdf(contents: bytes) -> bytes:
     return buffer.read()
 
 
-async def pdf_to_excel(contents: bytes) -> bytes:
+async def pdf_to_excel(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     all_tables = []
     with pdfplumber.open(BytesIO(contents)) as pdf:
         for page in pdf.pages:
@@ -149,8 +258,21 @@ async def pdf_to_excel(contents: bytes) -> bytes:
     if not all_tables:
         raise ValueError("No tables found in PDF")
     combined = pd.concat(all_tables, ignore_index=True)
+    if target_lang and target_lang != "none":
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source="auto", target=target_lang)
+        for col in combined.columns:
+            new_col = str(col)
+            try:
+                if new_col.strip():
+                    new_col = translator.translate(new_col)
+            except Exception:
+                pass
+            combined.rename(columns={col: new_col}, inplace=True)
+            combined[new_col] = combined[new_col].apply(
+                lambda val: translator.translate(str(val)) if val and isinstance(val, str) and val.strip() else val
+            )
     out_buf = BytesIO()
     with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
         combined.to_excel(writer, index=False)
     return out_buf.getvalue()
-

@@ -1,5 +1,6 @@
 # app/routers/pdf_converter.py
 import asyncio
+from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response, PlainTextResponse
 from app.services.office_converter import (
@@ -38,7 +39,11 @@ def _count_pdf_pages(contents: bytes) -> int:
 
 
 @router.post("/pdf-to-txt")
-async def pdf_to_txt_endpoint(request: Request, file: UploadFile = File(...)):
+async def pdf_to_txt_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+    target_lang: Optional[str] = Form(None)
+):
     validate_pdf(file)
     contents = await read_with_limit(file, MAX_FILE_SIZE)
 
@@ -46,7 +51,7 @@ async def pdf_to_txt_endpoint(request: Request, file: UploadFile = File(...)):
     check_and_deduct_credits(request, pages_to_process=page_count)
 
     try:
-        text = await pdf_to_text(contents)
+        text = await pdf_to_text(contents, target_lang=target_lang)
     except Exception as e:
         logger.error(f"PDF to TXT error: {e}")
         raise HTTPException(500, f"Conversion failed: {e}")
@@ -54,11 +59,14 @@ async def pdf_to_txt_endpoint(request: Request, file: UploadFile = File(...)):
 
 
 @router.post("/pdf-to-docx")
-async def pdf_to_docx_endpoint(file: UploadFile = File(...)):
+async def pdf_to_docx_endpoint(
+    file: UploadFile = File(...),
+    target_lang: Optional[str] = Form(None)
+):
     validate_pdf(file)
     contents = await read_with_limit(file, MAX_FILE_SIZE)
     try:
-        docx_bytes = await pdf_to_docx(contents)
+        docx_bytes = await pdf_to_docx(contents, target_lang=target_lang)
     except Exception as e:
         logger.error(f"PDF to DOCX error: {e}")
         raise HTTPException(500, f"Conversion failed: {e}")
@@ -70,11 +78,14 @@ async def pdf_to_docx_endpoint(file: UploadFile = File(...)):
 
 
 @router.post("/pdf-to-csv")
-async def pdf_to_csv_endpoint(file: UploadFile = File(...)):
+async def pdf_to_csv_endpoint(
+    file: UploadFile = File(...),
+    target_lang: Optional[str] = Form(None)
+):
     validate_pdf(file)
     contents = await read_with_limit(file, MAX_FILE_SIZE)
     try:
-        csv_bytes = await pdf_to_csv(contents)
+        csv_bytes = await pdf_to_csv(contents, target_lang=target_lang)
     except Exception as e:
         logger.error(f"PDF to CSV error: {e}")
         raise HTTPException(500, f"Conversion failed: {e}")
@@ -86,11 +97,14 @@ async def pdf_to_csv_endpoint(file: UploadFile = File(...)):
 
 
 @router.post("/pdf-to-excel")
-async def pdf_to_excel_endpoint(file: UploadFile = File(...)):
+async def pdf_to_excel_endpoint(
+    file: UploadFile = File(...),
+    target_lang: Optional[str] = Form(None)
+):
     validate_pdf(file)
     contents = await read_with_limit(file, MAX_FILE_SIZE)
     try:
-        excel_bytes = await pdf_to_excel(contents)
+        excel_bytes = await pdf_to_excel(contents, target_lang=target_lang)
     except Exception as e:
         logger.error(f"PDF to Excel error: {e}")
         raise HTTPException(500, f"Conversion failed: {e}")
@@ -103,12 +117,15 @@ async def pdf_to_excel_endpoint(file: UploadFile = File(...)):
 
 
 @router.post("/docx-to-pdf")
-async def docx_to_pdf_endpoint(file: UploadFile = File(...)):
+async def docx_to_pdf_endpoint(
+    file: UploadFile = File(...),
+    target_lang: Optional[str] = Form(None)
+):
     if not file.filename.lower().endswith(".docx"):
         raise HTTPException(400, "Only DOCX files are accepted")
     contents = await read_with_limit(file, MAX_FILE_SIZE)
     try:
-        pdf_bytes = await docx_to_pdf(contents)
+        pdf_bytes = await docx_to_pdf(contents, target_lang=target_lang)
     except Exception as e:
         logger.error(f"DOCX to PDF error: {e}")
         raise HTTPException(500, f"Conversion failed: {e}")
@@ -120,12 +137,15 @@ async def docx_to_pdf_endpoint(file: UploadFile = File(...)):
 
 
 @router.post("/txt-to-pdf")
-async def txt_to_pdf_endpoint(file: UploadFile = File(...)):
+async def txt_to_pdf_endpoint(
+    file: UploadFile = File(...),
+    target_lang: Optional[str] = Form(None)
+):
     if not file.filename.lower().endswith(".txt"):
         raise HTTPException(400, "Only TXT files are accepted")
     contents = await read_with_limit(file, MAX_FILE_SIZE)
     try:
-        pdf_bytes = await txt_to_pdf(contents)
+        pdf_bytes = await txt_to_pdf(contents, target_lang=target_lang)
     except Exception as e:
         logger.error(f"TXT to PDF error: {e}")
         raise HTTPException(500, f"Conversion failed: {e}")
@@ -137,12 +157,15 @@ async def txt_to_pdf_endpoint(file: UploadFile = File(...)):
 
 
 @router.post("/csv-to-pdf")
-async def csv_to_pdf_endpoint(file: UploadFile = File(...)):
+async def csv_to_pdf_endpoint(
+    file: UploadFile = File(...),
+    target_lang: Optional[str] = Form(None)
+):
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Only CSV files are accepted")
     contents = await read_with_limit(file, MAX_FILE_SIZE)
     try:
-        pdf_bytes = await csv_to_pdf(contents)
+        pdf_bytes = await csv_to_pdf(contents, target_lang=target_lang)
     except Exception as e:
         logger.error(f"CSV to PDF error: {e}")
         raise HTTPException(500, f"Conversion failed: {e}")
