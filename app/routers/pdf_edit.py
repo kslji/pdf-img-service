@@ -252,6 +252,22 @@ async def crop_pdf_per_page_endpoint(
     )
 
 
+def _analyze_pdf_sync(contents: bytes) -> dict:
+    import fitz
+    doc = fitz.open(stream=contents, filetype="pdf")
+    page_count = len(doc)
+    suggested_pages = []
+    for idx in range(page_count):
+        page = doc.load_page(idx)
+        text = page.get_text().lower()
+        if "signature" in text or "sign" in text:
+            suggested_pages.append(idx + 1)
+    return {
+        "page_count": page_count,
+        "suggested_pages": suggested_pages
+    }
+
+
 @router.post("/analyze")
 async def analyze_pdf_endpoint(
     file: UploadFile = File(...),
@@ -259,19 +275,7 @@ async def analyze_pdf_endpoint(
     validate_pdf(file)
     contents = await read_with_limit(file, MAX_FILE_SIZE)
     try:
-        import fitz
-        doc = fitz.open(stream=contents, filetype="pdf")
-        page_count = len(doc)
-        suggested_pages = []
-        for idx in range(page_count):
-            page = doc.load_page(idx)
-            text = page.get_text().lower()
-            if "signature" in text or "sign" in text:
-                suggested_pages.append(idx + 1)
-        return {
-            "page_count": page_count,
-            "suggested_pages": suggested_pages
-        }
+        return await asyncio.to_thread(_analyze_pdf_sync, contents)
     except Exception as e:
         logger.error(f"Analyze PDF error: {e}")
         raise HTTPException(500, f"Analysis failed: {e}")

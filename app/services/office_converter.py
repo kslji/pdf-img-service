@@ -43,7 +43,7 @@ def translate_text_helper(text: str, target_lang: str) -> str:
         return text
 
 
-async def pdf_to_text(contents: bytes, target_lang: Optional[str] = None) -> str:
+def _pdf_to_text_sync(contents: bytes, target_lang: Optional[str] = None) -> str:
     with pdfplumber.open(BytesIO(contents)) as pdf:
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
     if target_lang and target_lang != "none":
@@ -51,7 +51,11 @@ async def pdf_to_text(contents: bytes, target_lang: Optional[str] = None) -> str
     return text
 
 
-async def pdf_to_csv(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+async def pdf_to_text(contents: bytes, target_lang: Optional[str] = None) -> str:
+    return await asyncio.to_thread(_pdf_to_text_sync, contents, target_lang)
+
+
+def _pdf_to_csv_sync(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     all_tables = []
     with pdfplumber.open(BytesIO(contents)) as pdf:
         for page in pdf.pages:
@@ -79,7 +83,11 @@ async def pdf_to_csv(contents: bytes, target_lang: Optional[str] = None) -> byte
     return combined.to_csv(index=False).encode("utf-8")
 
 
-async def pdf_to_docx(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+async def pdf_to_csv(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+    return await asyncio.to_thread(_pdf_to_csv_sync, contents, target_lang)
+
+
+def _pdf_to_docx_sync(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
         tmp_pdf.write(contents)
         pdf_path = tmp_pdf.name
@@ -121,6 +129,40 @@ async def pdf_to_docx(contents: bytes, target_lang: Optional[str] = None) -> byt
         Path(docx_path).unlink(missing_ok=True)
 
 
+async def pdf_to_docx(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+    return await asyncio.to_thread(_pdf_to_docx_sync, contents, target_lang)
+
+
+def _docx_translate_sync(contents: bytes, target_lang: str) -> bytes:
+    doc = Document(BytesIO(contents))
+    from deep_translator import GoogleTranslator
+    translator = GoogleTranslator(source="auto", target=target_lang)
+
+    def translate_runs(runs):
+        """Translate each run's text individually, preserving run-level formatting."""
+        for run in runs:
+            if run.text and run.text.strip():
+                try:
+                    translated = translator.translate(run.text)
+                    if translated:
+                        run.text = translated
+                except Exception as te:
+                    logger.error(f"Run translation error: {te}")
+
+    for paragraph in doc.paragraphs:
+        translate_runs(paragraph.runs)
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    translate_runs(paragraph.runs)
+
+    out_buf = BytesIO()
+    doc.save(out_buf)
+    return out_buf.getvalue()
+
+
 async def docx_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     import shutil
     import os
@@ -133,33 +175,7 @@ async def docx_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> byt
 
     if target_lang and target_lang != "none":
         logger.info(f"docx_to_pdf: translating to '{target_lang}'")
-        doc = Document(BytesIO(contents))
-        from deep_translator import GoogleTranslator
-        translator = GoogleTranslator(source="auto", target=target_lang)
-
-        def translate_runs(runs):
-            """Translate each run's text individually, preserving run-level formatting."""
-            for run in runs:
-                if run.text and run.text.strip():
-                    try:
-                        translated = translator.translate(run.text)
-                        if translated:
-                            run.text = translated
-                    except Exception as te:
-                        logger.error(f"Run translation error: {te}")
-
-        for paragraph in doc.paragraphs:
-            translate_runs(paragraph.runs)
-
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for paragraph in cell.paragraphs:
-                        translate_runs(paragraph.runs)
-
-        out_buf = BytesIO()
-        doc.save(out_buf)
-        contents = out_buf.getvalue()
+        contents = await asyncio.to_thread(_docx_translate_sync, contents, target_lang)
         logger.info(f"docx_to_pdf: translation complete, new size={len(contents)} bytes")
 
     with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp_docx:
@@ -191,7 +207,7 @@ async def docx_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> byt
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
-async def txt_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+def _txt_to_pdf_sync(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     text = contents.decode("utf-8")
     if target_lang and target_lang != "none":
         text = translate_text_helper(text, target_lang)
@@ -207,7 +223,11 @@ async def txt_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> byte
     return buffer.read()
 
 
-async def csv_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+async def txt_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+    return await asyncio.to_thread(_txt_to_pdf_sync, contents, target_lang)
+
+
+def _csv_to_pdf_sync(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     df = pd.read_csv(BytesIO(contents))
     if target_lang and target_lang != "none":
         from deep_translator import GoogleTranslator
@@ -247,7 +267,11 @@ async def csv_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> byte
     return buffer.read()
 
 
-async def pdf_to_excel(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+async def csv_to_pdf(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+    return await asyncio.to_thread(_csv_to_pdf_sync, contents, target_lang)
+
+
+def _pdf_to_excel_sync(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     all_tables = []
     with pdfplumber.open(BytesIO(contents)) as pdf:
         for page in pdf.pages:
@@ -276,3 +300,7 @@ async def pdf_to_excel(contents: bytes, target_lang: Optional[str] = None) -> by
     with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
         combined.to_excel(writer, index=False)
     return out_buf.getvalue()
+
+
+async def pdf_to_excel(contents: bytes, target_lang: Optional[str] = None) -> bytes:
+    return await asyncio.to_thread(_pdf_to_excel_sync, contents, target_lang)

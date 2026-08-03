@@ -7,10 +7,7 @@ import tempfile
 from app.services.office_converter import docx_to_pdf
 
 
-async def assemble_pdf(files: list[tuple[str, bytes, str]]) -> bytes:
-    """
-    files: list of (filename, contents, content_type)
-    """
+def _assemble_pdf_sync(files: list[tuple[str, bytes, str]]) -> bytes:
     writer = PdfWriter()
     for fname, content, mime in files:
         if mime.startswith("image/"):
@@ -24,14 +21,6 @@ async def assemble_pdf(files: list[tuple[str, bytes, str]]) -> bytes:
             reader = PdfReader(io.BytesIO(content))
             for page in reader.pages:
                 writer.add_page(page)
-        elif (
-            mime
-            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ):
-            pdf_content = await docx_to_pdf(content)
-            reader = PdfReader(io.BytesIO(pdf_content))
-            for page in reader.pages:
-                writer.add_page(page)
         elif mime == "text/plain":
             # Convert TXT to PDF page
             pdf_content = text_to_pdf_page(content.decode("utf-8"))
@@ -42,6 +31,25 @@ async def assemble_pdf(files: list[tuple[str, bytes, str]]) -> bytes:
     buf = io.BytesIO()
     writer.write(buf)
     return buf.getvalue()
+
+
+async def assemble_pdf(files: list[tuple[str, bytes, str]]) -> bytes:
+    """
+    files: list of (filename, contents, content_type)
+    """
+    import asyncio
+    processed_files = []
+    for fname, content, mime in files:
+        if (
+            mime
+            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ):
+            pdf_content = await docx_to_pdf(content)
+            processed_files.append((fname, pdf_content, "application/pdf"))
+        else:
+            processed_files.append((fname, content, mime))
+
+    return await asyncio.to_thread(_assemble_pdf_sync, processed_files)
 
 
 def image_to_pdf_page(image: Image.Image) -> bytes:
