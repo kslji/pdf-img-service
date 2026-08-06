@@ -260,3 +260,59 @@ def unlock_pdf(contents: bytes, password: str) -> bytes:
         if not success:
             raise ValueError("Incorrect password")
     return doc.write(clean=True)
+
+def watermark_pdf(
+    contents: bytes,
+    text: str = None,
+    image_bytes: bytes = None,
+    opacity: float = 0.5,
+    rotation: float = 45.0,
+    size: float = 36.0,
+) -> bytes:
+    doc = fitz.open(stream=contents, filetype="pdf")
+    for page in doc:
+        rect = page.rect
+        cx, cy = rect.width / 2, rect.height / 2
+        
+        if text:
+            font = "helv"
+            text_len = fitz.get_text_length(text, fontname=font, fontsize=size)
+            p = fitz.Point(cx - text_len / 2, cy)
+            page.insert_text(
+                p,
+                text,
+                fontname=font,
+                fontsize=size,
+                color=(0, 0, 0),
+                fill_opacity=opacity,
+                rotate=rotation
+            )
+        elif image_bytes:
+            w = rect.width * (size / 100.0)
+            h = w
+            image_rect = fitz.Rect(cx - w/2, cy - h/2, cx + w/2, cy + h/2)
+            page.insert_image(image_rect, stream=image_bytes, keep_proportion=True, overlay=True)
+    return doc.write()
+
+def protect_pdf(contents: bytes, password: str) -> bytes:
+    doc = fitz.open(stream=contents, filetype="pdf")
+    doc.save(
+        clean=True,
+        encryption=fitz.PDF_ENCRYPT_AES_128,
+        owner_pw=password,
+        user_pw=password
+    )
+    out = doc.write()
+    doc.close()
+    return out
+
+def flatten_pdf(contents: bytes) -> bytes:
+    doc = fitz.open(stream=contents, filetype="pdf")
+    for page in doc:
+        for annot in page.annots():
+            annot.set_flags(fitz.PDF_ANNOT_IS_LOCKED | fitz.PDF_ANNOT_IS_PRINT)
+        page.clean_contents()
+    out = doc.write(clean=True)
+    doc.close()
+    return out
+

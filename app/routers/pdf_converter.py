@@ -11,6 +11,10 @@ from app.services.office_converter import (
     docx_to_pdf,
     txt_to_pdf,
     csv_to_pdf,
+    pdf_to_ppt,
+    convert_via_libreoffice,
+    epub_to_pdf,
+    zip_to_pdf,
 )
 from app.services.pdf_advanced_processor import (
     convert_pdf_to_images,
@@ -227,4 +231,213 @@ async def images_to_pdf_endpoint(
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=images_stitched.pdf"},
     )
+
+
+@router.post("/pdf-translate")
+async def pdf_translate_endpoint(
+    file: UploadFile = File(...),
+    target_lang: str = Form("es"),
+):
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        docx_bytes = await pdf_to_docx(contents, target_lang=target_lang)
+        pdf_bytes = await docx_to_pdf(docx_bytes)
+    except Exception as e:
+        logger.error(f"PDF Translate error: {e}")
+        raise HTTPException(500, f"Translation failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=translated_{file.filename}"},
+    )
+
+
+@router.post("/pdf-to-ppt")
+async def pdf_to_ppt_endpoint(
+    file: UploadFile = File(...),
+):
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        ppt_bytes = await pdf_to_ppt(contents)
+    except Exception as e:
+        logger.error(f"PDF to PPT error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        ppt_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f"attachment; filename={file.filename.replace('.pdf', '.pptx')}"},
+    )
+
+
+@router.post("/ppt-to-pdf")
+async def ppt_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await convert_via_libreoffice(contents, "pptx")
+    except Exception as e:
+        logger.error(f"PPT to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=converted_ppt.pdf"},
+    )
+
+
+@router.post("/excel-to-pdf")
+async def excel_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await convert_via_libreoffice(contents, "xlsx")
+    except Exception as e:
+        logger.error(f"Excel to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=converted_excel.pdf"},
+    )
+
+
+@router.post("/pages-to-pdf")
+async def pages_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await convert_via_libreoffice(contents, "pages")
+    except Exception as e:
+        logger.error(f"Pages to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=converted_pages.pdf"},
+    )
+
+
+@router.post("/epub-to-pdf")
+async def epub_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await epub_to_pdf(contents)
+    except Exception as e:
+        logger.error(f"EPUB to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=converted_epub.pdf"},
+    )
+
+
+@router.post("/zip-to-pdf")
+async def zip_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await zip_to_pdf(contents)
+    except Exception as e:
+        logger.error(f"ZIP to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=compiled_zip.pdf"},
+    )
+
+
+@router.post("/rtf-to-pdf")
+async def rtf_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await convert_via_libreoffice(contents, "rtf")
+    except Exception as e:
+        logger.error(f"RTF to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=converted_rtf.pdf"},
+    )
+
+
+@router.post("/odt-to-pdf")
+async def odt_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await convert_via_libreoffice(contents, "odt")
+    except Exception as e:
+        logger.error(f"ODT to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=converted_odt.pdf"},
+    )
+
+
+@router.post("/odp-to-pdf")
+async def odp_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await convert_via_libreoffice(contents, "odp")
+    except Exception as e:
+        logger.error(f"ODP to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=converted_odp.pdf"},
+    )
+
+
+@router.post("/ods-to-pdf")
+async def ods_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await convert_via_libreoffice(contents, "ods")
+    except Exception as e:
+        logger.error(f"ODS to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=converted_ods.pdf"},
+    )
+
+
+@router.post("/hwp-to-pdf")
+async def hwp_to_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await convert_via_libreoffice(contents, "hwp")
+    except Exception as e:
+        logger.error(f"HWP to PDF error: {e}")
+        raise HTTPException(500, f"Conversion failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=converted_hwp.pdf"},
+    )
+
 

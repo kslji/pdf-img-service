@@ -304,3 +304,170 @@ def _pdf_to_excel_sync(contents: bytes, target_lang: Optional[str] = None) -> by
 
 async def pdf_to_excel(contents: bytes, target_lang: Optional[str] = None) -> bytes:
     return await asyncio.to_thread(_pdf_to_excel_sync, contents, target_lang)
+
+def _pdf_to_ppt_sync(contents: bytes) -> bytes:
+    import fitz
+    from pptx import Presentation
+    from pptx.util import Inches
+    from PIL import Image
+    
+    doc = fitz.open(stream=contents, filetype="pdf")
+    prs = Presentation()
+    
+    # Remove default slides
+    for i in range(len(prs.slides)-1, -1, -1):
+        rId = prs.slides._sldIdLst[i].rId
+        prs.part.drop_rel(rId)
+        del prs.slides._sldIdLst[i]
+        
+    blank_slide_layout = prs.slide_layouts[6]
+    
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+        pix = page.get_pixmap(dpi=150)
+        img_data = pix.tobytes("png")
+        
+        img_fp = BytesIO(img_data)
+        
+        slide = prs.slides.add_slide(blank_slide_layout)
+        width_in = page.rect.width / 72.0
+        height_in = page.rect.height / 72.0
+        prs.slide_width = Inches(width_in)
+        prs.slide_height = Inches(height_in)
+        
+        slide.shapes.add_picture(img_fp, 0, 0, width=Inches(width_in), height=Inches(height_in))
+        
+    out_buf = BytesIO()
+    prs.save(out_buf)
+    return out_buf.getvalue()
+
+async def pdf_to_ppt(contents: bytes) -> bytes:
+    return await asyncio.to_thread(_pdf_to_ppt_sync, contents)
+
+async def convert_via_libreoffice(contents: bytes, ext: str) -> bytes:
+    import shutil
+    import os
+    libreoffice_bin = shutil.which("libreoffice") or shutil.which("soffice")
+    if not libreoffice_bin and os.path.exists("/Applications/LibreOffice.app/Contents/MacOS/soffice"):
+        libreoffice_bin = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+    
+    if not libreoffice_bin:
+        raise FileNotFoundError("LibreOffice executable not found. Please install LibreOffice.")
+        
+    suffix = f".{ext.replace('.', '')}"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
+        tmp_file.write(contents)
+        input_path = tmp_file.name
+        
+    output_dir = tempfile.mkdtemp()
+    try:
+        cmd = [
+            libreoffice_bin,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            output_dir,
+            input_path,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            raise RuntimeError(f"LibreOffice failed: {stderr.decode()}")
+        
+        pdf_file = Path(output_dir) / (Path(input_path).stem + ".pdf")
+        if not pdf_file.exists():
+            raise FileNotFoundError(f"Converted PDF not found for {ext}")
+            
+        with open(pdf_file, "rb") as f:
+            pdf_bytes = f.read()
+        return pdf_bytes
+    finally:
+        Path(input_path).unlink(missing_ok=True)
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+def _epub_to_pdf_sync(contents: bytes) -> bytes:
+    import zipfile
+    from bs4 import BeautifulSoup
+    
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    with zipfile.ZipFile(BytesIO(contents)) as z:
+        html_files = [f for f in z.namelist() if f.endswith(('.html', '.xhtml', '.htm'))]
+        html_files.sort()
+        for hf in html_files:
+            try:
+                html_data = z.read(hf).decode("utf-8", errors="ignore")
+                soup = BeautifulSoup(html_data, "html.parser")
+                paragraphs = soup.find_all(['p', 'h1', 'h2', 'h3'])
+                for p in paragraphs:
+                    text = p.get_text().strip()
+                    if text:
+                        style_name = "Heading1" if p.name == "h1" else "Heading2" if p.name == "h2" else "Normal"
+                        story.append(Paragraph(text, styles[style_name]))
+                        story.append(Spacer(1, 4))
+                story.append(Spacer(1, 10))
+            except Exception as e:
+                logger.error(f"Failed to parse epub section {hf}: {e}")
+    
+    if not story:
+        story.append(Paragraph("Empty EPUB file.", styles["Normal"]))
+        
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.read()
+    
+async def epub_to_pdf(contents: bytes) -> bytes:
+    return await asyncio.to_thread(_epub_to_pdf_sync, contents)
+
+def _zip_to_pdf_sync(contents: bytes) -> bytes:
+    import zipfile
+    import fitz
+    from PIL import Image
+    
+    merged_doc = fitz.open()
+    
+    with zipfile.ZipFile(BytesIO(contents)) as z:
+        for filename in sorted(z.namelist()):
+            if filename.startswith("__MACOSX") or filename.endswith((".DS_Store", "/")):
+                continue
+                
+            file_bytes = z.read(filename)
+            ext = "." + filename.split('.')[-1].lower()
+            
+            try:
+                if ext == ".pdf":
+                    doc = fitz.open(stream=file_bytes, filetype="pdf")
+                    merged_doc.insert_pdf(doc)
+                    doc.close()
+                elif ext in (".png", ".jpg", ".jpeg"):
+                    doc = fitz.open()
+                    img = Image.open(BytesIO(file_bytes))
+                    width, height = img.width, img.height
+                    page = doc.new_page(width=width, height=height)
+                    page.insert_image(fitz.Rect(0, 0, width, height), stream=file_bytes)
+                    merged_doc.insert_pdf(doc)
+                    doc.close()
+                elif ext == ".txt":
+                    txt_bytes = _txt_to_pdf_sync(file_bytes)
+                    doc = fitz.open(stream=txt_bytes, filetype="pdf")
+                    merged_doc.insert_pdf(doc)
+                    doc.close()
+            except Exception as e:
+                logger.error(f"Failed to process zip file {filename}: {e}")
+                
+    if len(merged_doc) == 0:
+        raise ValueError("No convertible files found inside the ZIP archive.")
+        
+    pdf_bytes = merged_doc.write()
+    merged_doc.close()
+    return pdf_bytes
+
+async def zip_to_pdf(contents: bytes) -> bytes:
+    return await asyncio.to_thread(_zip_to_pdf_sync, contents)
+

@@ -14,6 +14,9 @@ from app.services.pdf_advanced_processor import (
     add_page_numbers,
     sign_pdf,
     unlock_pdf,
+    watermark_pdf,
+    protect_pdf,
+    flatten_pdf,
 )
 from app.utils.cache import get_cached_page_image, cache_page_image
 
@@ -279,3 +282,115 @@ async def analyze_pdf_endpoint(
     except Exception as e:
         logger.error(f"Analyze PDF error: {e}")
         raise HTTPException(500, f"Analysis failed: {e}")
+
+
+@router.post("/watermark")
+async def watermark_pdf_endpoint(
+    file: UploadFile = File(...),
+    text: str = Form(None),
+    image: UploadFile = File(None),
+    opacity: float = Form(0.5),
+    rotation: float = Form(45.0),
+    size: float = Form(36.0),
+):
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    
+    image_bytes = None
+    if image:
+        image_bytes = await image.read()
+        
+    try:
+        pdf_bytes = await asyncio.to_thread(
+            watermark_pdf, contents, text, image_bytes, opacity, rotation, size
+        )
+    except Exception as e:
+        logger.error(f"Watermark PDF error: {e}")
+        raise HTTPException(500, f"Watermarking failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=watermarked_{file.filename}"},
+    )
+
+
+@router.post("/protect")
+async def protect_pdf_endpoint(
+    file: UploadFile = File(...),
+    password: str = Form(...),
+):
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await asyncio.to_thread(protect_pdf, contents, password)
+    except Exception as e:
+        logger.error(f"Protect PDF error: {e}")
+        raise HTTPException(500, f"Password lock failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=locked_{file.filename}"},
+    )
+
+
+@router.post("/flatten")
+async def flatten_pdf_endpoint(
+    file: UploadFile = File(...),
+):
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        pdf_bytes = await asyncio.to_thread(flatten_pdf, contents)
+    except Exception as e:
+        logger.error(f"Flatten PDF error: {e}")
+        raise HTTPException(500, f"Flattening failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=flattened_{file.filename}"},
+    )
+
+
+@router.post("/edit")
+async def edit_pdf_endpoint(
+    file: UploadFile = File(...),
+    annotations: str = Form(None)
+):
+    validate_pdf(file)
+    contents = await read_with_limit(file, MAX_FILE_SIZE)
+    try:
+        import fitz
+        doc = fitz.open(stream=contents, filetype="pdf")
+        if annotations:
+            ann_list = json.loads(annotations)
+            for ann in ann_list:
+                page_num = ann.get("page", 1) - 1
+                if 0 <= page_num < len(doc):
+                    page = doc.load_page(page_num)
+                    ann_type = ann.get("type")
+                    if ann_type == "text":
+                        text = ann.get("text", "")
+                        x = float(ann.get("x", 50))
+                        y = float(ann.get("y", 50))
+                        size = float(ann.get("size", 12))
+                        color_hex = ann.get("color", "000000").lstrip("#")
+                        rgb = tuple(int(color_hex[i:i+2], 16) / 255.0 for i in (0, 2, 4)) if len(color_hex) == 6 else (0,0,0)
+                        page.insert_text(fitz.Point(x, y), text, fontsize=size, color=rgb)
+                    elif ann_type == "draw":
+                        points_list = ann.get("points", [])
+                        if len(points_list) > 1:
+                            for idx in range(len(points_list) - 1):
+                                p1 = fitz.Point(points_list[idx][0], points_list[idx][1])
+                                p2 = fitz.Point(points_list[idx+1][0], points_list[idx+1][1])
+                                page.draw_line(p1, p2, color=(0,0,0), width=2)
+        pdf_bytes = doc.write()
+        doc.close()
+    except Exception as e:
+        logger.error(f"Edit PDF error: {e}")
+        raise HTTPException(500, f"Edit failed: {e}")
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=edited_{file.filename}"},
+    )
+
