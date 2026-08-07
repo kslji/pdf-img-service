@@ -193,18 +193,56 @@ async def pdf_to_images_endpoint(
         raise HTTPException(400, "Supported formats are png, jpeg, or jpg")
     if format == "jpg":
         format = "jpeg"
+
+    import uuid
+    import base64
+    import json
+    import redis.asyncio as aioredis
+    import os
+
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    r_async = aioredis.from_url(redis_url, decode_responses=True)
+
+    job_id = str(uuid.uuid4())
+    file_base64 = base64.b64encode(contents).decode('utf-8')
+    payload = {
+        "job_id": job_id,
+        "file_base64": file_base64,
+        "format": format,
+        "dpi": dpi
+    }
+
     try:
-        zip_bytes = await asyncio.to_thread(
-            convert_pdf_to_images, contents, format, dpi
-        )
+        await r_async.rpush("pdf_to_images_queue", json.dumps(payload))
+        
+        pubsub = r_async.pubsub()
+        await pubsub.subscribe(f"pdf_to_images_result:{job_id}")
+
+        async def wait_for_msg():
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    return json.loads(message["data"])
+                    
+        result = await asyncio.wait_for(wait_for_msg(), timeout=120.0)
+        await r_async.close()
+
+        if result.get("status") == "completed":
+            zip_bytes = bytes.fromhex(result["zip_hex"])
+            return Response(
+                zip_bytes,
+                media_type="application/zip",
+                headers={"Content-Disposition": "attachment; filename=pages.zip"},
+            )
+        else:
+            raise HTTPException(500, detail=result.get("error", "Failed to convert PDF."))
+    except asyncio.TimeoutError:
+        await r_async.close()
+        raise HTTPException(status_code=504, detail="PDF conversion timed out in queue")
     except Exception as e:
+        await r_async.close()
         logger.error(f"PDF to images error: {e}")
         raise HTTPException(500, f"Conversion failed: {e}")
-    return Response(
-        zip_bytes,
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=pages.zip"},
-    )
+
 
 
 @router.post("/images-to-pdf")

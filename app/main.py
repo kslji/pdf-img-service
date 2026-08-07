@@ -30,6 +30,12 @@ async def startup_event():
     # Set default executor to handle high concurrent sync tasks (like PDF processing)
     loop = asyncio.get_event_loop()
     loop.set_default_executor(ThreadPoolExecutor(max_workers=250))
+    
+    import threading
+    from app.services.pdf_worker import run_pdf_worker
+    thread = threading.Thread(target=run_pdf_worker, daemon=True)
+    thread.start()
+
 
 app.add_middleware(GatewayAuthMiddleware)
 app.add_middleware(CentralLoggerMiddleware, service_name="pdf-image")
