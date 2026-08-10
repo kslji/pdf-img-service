@@ -20,7 +20,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI(
-    title="File Optimizer & Document Toolkit Microservice",
+    title="File Optimizer & Document toolkit  Microservice",
     version="2.0.0",
     description="High-performance document and image manipulation microservice.",
 )
