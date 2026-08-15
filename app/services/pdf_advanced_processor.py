@@ -1,9 +1,12 @@
 # app/services/pdf_advanced_processor.py
 import io
 import json
+import logging
 import zipfile
 import fitz  # PyMuPDF
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 def convert_pdf_to_images(contents: bytes, fmt: str = "png", dpi: int = 150) -> bytes:
     doc = fitz.open(stream=contents, filetype="pdf")
@@ -100,20 +103,110 @@ def redact_pdf(
     contents: bytes,
     text_to_redact: str = None,
     rects_json: str = None,
-    fill_color: tuple[float, float, float] = (0, 0, 0)
+    fill_color: tuple[float, float, float] = (0, 0, 0),
+    replacements_json: str = None
 ) -> bytes:
     doc = fitz.open(stream=contents, filetype="pdf")
     
+    replacements = {}
+    if replacements_json:
+        try:
+            replacements = json.loads(replacements_json)
+        except Exception as e:
+            logger.warning(f"Failed to parse replacements_json: {e}")
+
     # Text-based redaction
     if text_to_redact:
-        # Split comma-separated search queries
-        terms = [t.strip() for t in text_to_redact.split(",") if t.strip()]
+        # Split pipe-separated search queries and sort by length descending
+        terms = [t.strip() for t in text_to_redact.split("|") if t.strip()]
+        terms.sort(key=len, reverse=True)
+        
+        # Build a case-insensitive replacements dictionary lookup
+        replacements_ci = {k.lower(): v for k, v in replacements.items()}
+        
+        # Keep track of already redacted areas to avoid double-processing overlapping rects
+        processed_rects = []
+        
         for page in doc:
+            # Load text details from page (for matching font info)
+            text_instances = page.get_text("dict").get("blocks", [])
+            
             for term in terms:
                 rects = page.search_for(term)
+                repl_text = replacements_ci.get(term.lower())
+                
                 for rect in rects:
-                    page.add_redact_annot(rect, fill=fill_color)
-            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+                    # Check if this rect overlaps with an already processed (longer) term
+                    # A small buffer is allowed for completely separate lines/words
+                    is_duplicate = False
+                    for pr in processed_rects:
+                        # If the new rect is almost fully covered by an already processed rect, skip it
+                        intersection = rect & pr
+                        if intersection.get_area() > 0.8 * rect.get_area():
+                            is_duplicate = True
+                            break
+                    if is_duplicate:
+                        continue
+                    
+                    processed_rects.append(rect)
+                    
+                    # Detect original font properties
+                    font_name = "Helvetica"
+                    font_size = 10
+                    text_color = (0, 0, 0)
+                    
+                    found_font = False
+                    for block in text_instances:
+                        if "lines" in block:
+                            for line in block["lines"]:
+                                for span in line["spans"]:
+                                    span_rect = fitz.Rect(span["bbox"])
+                                    # If search result rect overlaps/contains the span text
+                                    if rect.intersects(span_rect) or span_rect.contains(rect):
+                                        font_name = span.get("font", "Helvetica")
+                                        font_size = span.get("size", 10)
+                                        color_int = span.get("color", 0)
+                                        r = ((color_int >> 16) & 255) / 255.0
+                                        g = ((color_int >> 8) & 255) / 255.0
+                                        b = (color_int & 255) / 255.0
+                                        text_color = (r, g, b)
+                                        found_font = True
+                                        break
+                                if found_font:
+                                    break
+                        if found_font:
+                            break
+                    
+                    # 1. Blank out/Redact the original area completely first (fill with White (1,1,1))
+                    page.add_redact_annot(rect, fill=(1, 1, 1))
+                    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+                    
+                    # 2. Write the replacement text on top with exact matched styles
+                    if repl_text:
+                        supported_fonts = ["helvetica", "times-roman", "courier", "symbol", "zapfdingbats"]
+                        matched_font = "helvetica"
+                        font_lower = font_name.lower()
+                        for sf in supported_fonts:
+                            if sf in font_lower:
+                                matched_font = sf
+                                break
+                        if "bold" in font_lower:
+                            matched_font += "-bold"
+                        elif "italic" in font_lower:
+                            matched_font += "-oblique" if "courier" in matched_font or "helvetica" in matched_font else "-italic"
+                        
+                        # Use insert_textbox to center-align replacement inside the redacted bounding box
+                        # Adjusted bounding box height dynamically to center align text baseline cleanly
+                        height_diff = rect.y1 - rect.y0
+                        adjusted_rect = fitz.Rect(rect.x0, rect.y0 + (height_diff * 0.1), rect.x1, rect.y1 + (height_diff * 0.1))
+                        page.insert_textbox(
+                            adjusted_rect, 
+                            repl_text, 
+                            fontname=matched_font, 
+                            fontsize=font_size, 
+                            color=text_color,
+                            align=1
+                        )
             
     # Coordinate-based redaction
     if rects_json:

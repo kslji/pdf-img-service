@@ -93,6 +93,20 @@ class TestPDFServices(unittest.TestCase):
         self.assertNotIn("SECRET123", text)
         doc.close()
 
+    def test_redact_pdf_text_replacement(self):
+        import json
+        replacements_json = json.dumps({"SECRET123": "REPLACED_TEXT"})
+        redacted_bytes = redact_pdf(
+            self.dummy_pdf_bytes, 
+            text_to_redact="SECRET123", 
+            replacements_json=replacements_json
+        )
+        doc = fitz.open(stream=redacted_bytes, filetype="pdf")
+        text = doc.load_page(0).get_text()
+        self.assertNotIn("SECRET123", text)
+        self.assertIn("REPLACED_TEXT", text)
+        doc.close()
+
     def test_redact_pdf_rect(self):
         # Redact the top area containing "Hello World"
         import json
@@ -174,6 +188,33 @@ class TestPDFServices(unittest.TestCase):
         text = doc.load_page(0).get_text()
         self.assertNotIn("Hello World", text)
         doc.close()
+
+    def test_translation_protection_and_localization(self):
+        from app.services.office_converter import protect_text, restore_text, localize_post_translation
+        
+        # Test keyword protection
+        orig_text = "I developed a Python and Django webapp at Paytm in Gurugram, contact me at test@example.com."
+        protected, placeholders = protect_text(orig_text)
+        
+        self.assertIn("[PH_0]", protected)
+        self.assertIn("[PH_1]", protected)
+        self.assertIn("[PH_2]", protected)
+        self.assertIn("[PH_3]", protected)
+        self.assertIn("[PH_4]", protected)
+        
+        # Test restoration
+        restored = restore_text(protected, placeholders)
+        self.assertEqual(restored, orig_text)
+        
+        # Test Chinese localization post-processing
+        dirty_zh = "在 2025 年 8 月 - 2025 年 11 月 期间， 担任 SDE-2： 负责相关工作。"
+        clean_zh = localize_post_translation(dirty_zh, "zh-CN")
+        self.assertEqual(clean_zh, "在 2025年8月-2025年11月 期间，担任 SDE-2：负责相关工作。")
+
+        # Test language-agnostic spacing cleanups (applicable to Spanish, French, etc.)
+        dirty_es = "SDE-1 / SDE-2 ( 96 % score ) in 2025 - 2026, version 5 . 36"
+        clean_es = localize_post_translation(dirty_es, "es")
+        self.assertEqual(clean_es, "SDE-1/SDE-2 (96% score) in 2025-2026, version 5.36")
 
 if __name__ == "__main__":
     unittest.main()

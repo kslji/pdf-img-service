@@ -59,6 +59,7 @@ async def redact_pdf_endpoint(
     file: UploadFile = File(...),
     text_to_redact: str = Form(None),
     rects: str = Form(None),
+    replacements_json: str = Form(None),
 ):
     validate_pdf(file)
     if not text_to_redact and not rects:
@@ -66,7 +67,7 @@ async def redact_pdf_endpoint(
     contents = await read_with_limit(file, MAX_FILE_SIZE)
     try:
         pdf_bytes = await asyncio.to_thread(
-            redact_pdf, contents, text_to_redact, rects
+            redact_pdf, contents, text_to_redact, rects, (0, 0, 0), replacements_json
         )
     except Exception as e:
         logger.error(f"Redact PDF error: {e}")
